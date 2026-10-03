@@ -18,6 +18,7 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate {
     private var calibrationWindow: CalibrationWindowController?
     private var mapWindow: NSWindowController?
     private var startupError: String?
+    private var permissionTimer: DispatchSourceTimer?
 
     private let enableItem = NSMenuItem(title: "Compensation",
                                         action: #selector(toggleEnabled),
@@ -156,17 +157,22 @@ public final class MenuBarApp: NSObject, NSApplicationDelegate {
         }
 
         // The permission is granted outside this process, so the only way to
-        // notice is to look again.
-        Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] timer in
-            guard let self else {
-                timer.invalidate()
-                return
+        // notice is to look again. Strong capture is deliberate: this object is
+        // the application delegate and outlives everything else.
+        permissionTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 1.5, repeating: 1.5)
+        timer.setEventHandler {
+            MainActor.assumeIsolated {
+                guard self.missingPermissions().isEmpty else { return }
+                self.permissionTimer?.cancel()
+                self.permissionTimer = nil
+                if self.settings.enabledAtLaunch { self.startEngine() }
+                self.refresh()
             }
-            guard self.missingPermissions().isEmpty else { return }
-            timer.invalidate()
-            if self.settings.enabledAtLaunch { self.startEngine() }
-            self.refresh()
         }
+        permissionTimer = timer
+        timer.resume()
     }
 
     // MARK: - Engine
