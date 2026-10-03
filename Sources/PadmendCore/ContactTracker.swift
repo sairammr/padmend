@@ -306,11 +306,27 @@ public final class ContactTracker {
         }
     }
 
+    /// Whether a gesture involving more than one finger is in progress.
+    ///
+    /// Both the hold and the re-association gates relax while this is true,
+    /// and the reason is a deliberate asymmetry in what a mistake costs. For a
+    /// lone finger, keeping a vanished contact alive costs lag on every lift
+    /// and every click, so it is only done where the sensor is known to be
+    /// unreliable. During a multi-finger gesture the trade runs the other way:
+    /// fingers rarely leave one at a time mid-scroll, so a wrong hold costs a
+    /// few milliseconds at the end of a gesture, while a wrong lift tears the
+    /// gesture in half and turns a scroll into a stray drag. The relaxation is
+    /// safe because an affirmative breakTouch is still honoured instantly, so
+    /// a real lift is never delayed — this governs only a contact that
+    /// vanished without saying why.
+    private var isMultiFingerGesture: Bool { tracks.count > 1 }
+
     /// True while a vanished contact should be kept alive rather than reported
     /// as a lift.
     private func shouldHoldOpen(_ track: Track, at now: Double) -> Bool {
         guard now - track.lastRealTime <= config.graceWindow else { return false }
         guard config.suspectCellsOnly, deadMap.isCalibrated else { return true }
+        if isMultiFingerGesture { return true }
         return deadMap.isNearSuspectCell(track.realPosition)
     }
 
@@ -370,7 +386,8 @@ public final class ContactTracker {
             let gap = now - track.lastRealTime
             guard gap > 0, gap <= config.graceWindow else { continue }
 
-            if config.requireSuspectEvidence, deadMap.isCalibrated {
+            if config.requireSuspectEvidence, deadMap.isCalibrated,
+               !isMultiFingerGesture {
                 let crossesSuspect = deadMap.segmentCrossesSuspectCell(
                     from: track.realPosition, to: sample.position)
                 let vanishedOverSuspect = deadMap.isNearSuspectCell(track.realPosition)

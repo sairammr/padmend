@@ -6,5 +6,6 @@ runContactTrackerTests()
 runPointerMapperTests()
 runCalibrationTests()
 runGestureRecognizerTests()
+runPipelineTests()
 
 exit(report())
