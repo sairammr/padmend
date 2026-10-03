@@ -15,6 +15,6 @@ let package = Package(
         .target(name: "PadmendCore"),
         .target(name: "PadmendKit", dependencies: ["CMultitouch", "PadmendCore"]),
         .executableTarget(name: "padmend", dependencies: ["PadmendKit", "PadmendCore"]),
-        .testTarget(name: "PadmendCoreTests", dependencies: ["PadmendCore"]),
+        .executableTarget(name: "padmend-tests", dependencies: ["PadmendCore"]),
     ]
 )
