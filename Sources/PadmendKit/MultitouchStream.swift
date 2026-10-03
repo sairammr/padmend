@@ -41,7 +41,7 @@ public enum MultitouchError: Error, CustomStringConvertible {
 /// object alone, so there is nothing to contend over.
 public final class MultitouchStream {
     public private(set) var device: TrackpadDevice?
-    private var handler: ((TouchFrame) -> Void)?
+    private var handler: (@Sendable (TouchFrame) -> Void)?
 
     /// The callback carries no context pointer, so the active stream is held
     /// here. One trackpad is the whole product.
@@ -98,7 +98,7 @@ public final class MultitouchStream {
     }
 
     public func start(device: TrackpadDevice,
-                      handler: @escaping (TouchFrame) -> Void) throws {
+                      handler: @escaping @Sendable (TouchFrame) -> Void) throws {
         self.handler = handler
         self.device = device
         MultitouchStream.active = self

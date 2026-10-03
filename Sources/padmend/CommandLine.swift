@@ -15,6 +15,7 @@ usage: padmend <command>
   map         show the saved map
   run         take over the trackpad and compensate
   reset       discard the saved map
+  menubar     run as a menu bar app (what the bundled app launches)
 
 Compensation needs two permissions, both granted to whatever launched this:
 Input Monitoring to read the sensor, Accessibility to replace its output.

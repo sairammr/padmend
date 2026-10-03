@@ -5,9 +5,16 @@ import PadmendCore
 ///
 /// Frames are processed on the thread MultitouchSupport delivers them on,
 /// because the pointer is being driven from them and a hop onto another queue
-/// is latency the user can feel. Everything mutable is therefore behind one
+/// is latency the user can feel. Everything mutable is therefore behind a
 /// lock, taken by the frame handler and by any setting changed from a menu.
-public final class Engine {
+///
+/// The `@unchecked` conformance is load-bearing rather than a shortcut: the
+/// tracker, mapper, recognizer, settings, mode and frame clock are all guarded
+/// by `lock`, the momentum timer by `momentumLock`, and the suppression state
+/// by the tap's own lock. The three callbacks are the exception — they are set
+/// once, before `start`, and read afterwards, so they are never written while
+/// a frame is in flight.
+public final class Engine: @unchecked Sendable {
     public enum Mode: Sendable {
         /// Watch the stream, change nothing. Used while calibrating.
         case observe
@@ -19,9 +26,9 @@ public final class Engine {
 
     /// Raw frame alongside the tracker's view of it, for calibration and the
     /// live heat map. Called on the contact-stream thread.
-    public var onFrame: ((TouchFrame, TrackerOutput) -> Void)?
-    public var onPanic: (() -> Void)?
-    public var onNotice: ((String) -> Void)?
+    public var onFrame: (@Sendable (TouchFrame, TrackerOutput) -> Void)?
+    public var onPanic: (@Sendable () -> Void)?
+    public var onNotice: (@Sendable (String) -> Void)?
 
     private let stream = MultitouchStream()
     private let poster = EventPoster()
@@ -35,6 +42,7 @@ public final class Engine {
     private var mode: Mode = .observe
     private var lastFrameTime: Double?
 
+    private let momentumLock = NSLock()
     private var momentumTimer: DispatchSourceTimer?
     private let momentumQueue = DispatchQueue(label: "padmend.momentum")
 
@@ -54,7 +62,9 @@ public final class Engine {
     // MARK: - Lifecycle
 
     public func start(mode: Mode) throws {
+        lock.lock()
         self.mode = mode
+        lock.unlock()
 
         if mode == .takeover {
             try tap.start()
@@ -86,7 +96,10 @@ public final class Engine {
     /// Turns suppression off without tearing anything down, so it can be
     /// turned straight back on.
     public func setEnabled(_ enabled: Bool) {
-        tap.setSuppressing(enabled && mode == .takeover)
+        lock.lock()
+        let takeover = mode == .takeover
+        lock.unlock()
+        tap.setSuppressing(enabled && takeover)
         if !enabled {
             stopMomentum()
             lock.lock()
@@ -204,6 +217,8 @@ public final class Engine {
     /// Inertia has to be driven by a clock, because the hardware stops
     /// reporting the moment the fingers leave the glass.
     private func startMomentum() {
+        momentumLock.lock()
+        defer { momentumLock.unlock() }
         guard momentumTimer == nil else { return }
         let interval = 1.0 / 90
         let timer = DispatchSource.makeTimerSource(queue: momentumQueue)
@@ -223,7 +238,10 @@ public final class Engine {
     }
 
     private func stopMomentum() {
-        momentumTimer?.cancel()
+        momentumLock.lock()
+        let timer = momentumTimer
         momentumTimer = nil
+        momentumLock.unlock()
+        timer?.cancel()
     }
 }

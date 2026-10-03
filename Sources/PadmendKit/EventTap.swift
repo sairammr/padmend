@@ -15,10 +15,10 @@ public final class EventTap {
     /// Control-Option-Command-P.
     public static let panicKeyCode: CGKeyCode = 35
 
-    public var onPanic: (() -> Void)?
-    public var onButtonState: ((_ left: Bool, _ right: Bool) -> Void)?
+    public var onPanic: (@Sendable () -> Void)?
+    public var onButtonState: (@Sendable (_ left: Bool, _ right: Bool) -> Void)?
     /// Called when macOS disables the tap, for logging.
-    public var onTapDisabled: ((String) -> Void)?
+    public var onTapDisabled: (@Sendable (String) -> Void)?
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?

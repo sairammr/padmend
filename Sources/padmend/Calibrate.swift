@@ -2,6 +2,10 @@ import Foundation
 import PadmendCore
 import PadmendKit
 
+/// Enough of the pad covered for the result to be worth saving. Below this a
+/// map would mostly be condemning whatever the user happened to miss.
+private let minimumCoverage = 0.75
+
 /// Interactive calibration.
 ///
 /// The user sweeps the pad while the evidence builds up on screen. Showing the
@@ -25,47 +29,44 @@ func commandCalibrate() {
         fail("\(error)")
     }
 
-    let calibrator = Calibrator(grid: device.grid)
-    let engine = Engine(device: device,
-                        deadMap: .empty(grid: device.grid),
-                        settings: Store.loadSettings(),
-                        trackerConfig: .calibration)
-
-    let state = CalibrationState()
-    engine.onFrame = { frame, output in
-        calibrator.ingest(frame: frame, output: output)
-        state.setFingers(output.fingers.map(\.position))
-    }
-
+    let capture = CalibrationCapture(grid: device.grid)
+    let stream = MultitouchStream()
     do {
-        try engine.start(mode: .observe)
+        try stream.start(device: device) { frame in capture.ingest(frame) }
     } catch {
         fail("\(error)")
     }
 
+    let aborted = Flag()
     print(Terminal.hideCursor, terminator: "")
+
     let redraw = Timer(timeInterval: 0.08, repeats: true) { _ in
+        let state = capture.snapshot()
         var screen = Terminal.home
         screen += "  calibrating \(device.grid.cols)x\(device.grid.rows) sensor"
-        screen += "   \(Terminal.bar(calibrator.progress))        \n\n"
-        screen += Terminal.render(coverage: calibrator.coverage,
-                                  fingers: state.fingers)
+        screen += "   \(Terminal.bar(state.progress))        \n\n"
+        screen += Terminal.render(coverage: state.coverage, fingers: state.fingers)
         screen += "\n\n  \(Terminal.legend)\n"
         screen += "\n  Sweep the whole pad in slow overlapping strokes, "
         screen += "including the edges.\n"
         screen += "  Red means your finger was there and the pad said nothing.\n"
         screen += String(format: "  dropouts repaired: %-6d frames: %-8d\n",
-                         calibrator.repairedDropouts, calibrator.frameCount)
-        screen += "\n  Press return to save, or q then return to abort.   "
+                         state.repairedDropouts, state.frameCount)
+        if state.progress >= minimumCoverage {
+            screen += "\n  Enough of the pad is covered. "
+            screen += "Press return to save, or keep sweeping.  "
+        } else {
+            screen += "\n  Keep sweeping. Return saves anyway, q then return aborts."
+        }
         print(screen, terminator: "")
     }
     RunLoop.main.add(redraw, forMode: .common)
 
-    // stdin is read on its own thread so the contact stream keeps being
-    // serviced by the main run loop while we wait.
+    // stdin is read on its own thread so the main run loop keeps servicing the
+    // contact stream while we wait for the user to finish.
     let reader = Thread {
         let line = readLine(strippingNewline: true) ?? ""
-        state.setAbort(line.lowercased().hasPrefix("q"))
+        aborted.set(line.lowercased().hasPrefix("q"))
         CFRunLoopStop(CFRunLoopGetMain())
     }
     reader.start()
@@ -73,16 +74,16 @@ func commandCalibrate() {
     CFRunLoopRun()
 
     redraw.invalidate()
-    engine.stop()
+    stream.stop()
     print(Terminal.showCursor, terminator: "")
     print("")
 
-    if state.aborted {
+    if aborted.value {
         print("aborted; nothing saved")
         return
     }
 
-    let map = calibrator.makeDeadMap()
+    let map = capture.makeDeadMap()
     guard map.isCalibrated else {
         fail("no evidence gathered — was the pad touched?")
     }
@@ -103,39 +104,33 @@ func commandCalibrate() {
     print("  condemned rows:    \(describe(map.condemnedRows))")
     print(String(format: "  compensation:      %.2fx across, %.2fx up",
                  mapper.compensation.x, mapper.compensation.y))
-    if map.condemnedColumns.isEmpty && map.condemnedRows.isEmpty
-        && !map.health.contains(.dead) && !map.health.contains(.flaky) {
-        print("\n  Nothing wrong was found. If the pad still misbehaves, "
-              + "sweep more slowly and cover the edges.")
+
+    let foundNothing = map.condemnedColumns.isEmpty && map.condemnedRows.isEmpty
+        && !map.health.contains(.dead) && !map.health.contains(.flaky)
+    if foundNothing {
+        print("""
+
+                Nothing wrong was found. If the pad still misbehaves, sweep \
+              more slowly next time — a fast stroke gives the sensor fewer \
+              chances to fail, so a bad cell can look fine.
+              """)
     }
     print("\n  Next: padmend run")
 }
 
-/// Shared between the contact-stream thread and the redraw timer.
-final class CalibrationState {
+/// A boolean two threads can share.
+final class Flag: @unchecked Sendable {
     private let lock = NSLock()
-    private var _fingers: [Point] = []
-    private var _aborted = false
+    private var flag = false
 
-    var fingers: [Point] {
+    var value: Bool {
         lock.lock(); defer { lock.unlock() }
-        return _fingers
+        return flag
     }
 
-    var aborted: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return _aborted
-    }
-
-    func setFingers(_ fingers: [Point]) {
+    func set(_ value: Bool) {
         lock.lock()
-        _fingers = fingers
-        lock.unlock()
-    }
-
-    func setAbort(_ aborted: Bool) {
-        lock.lock()
-        _aborted = aborted
+        flag = value
         lock.unlock()
     }
 }
