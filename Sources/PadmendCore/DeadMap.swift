@@ -70,21 +70,24 @@ public struct LiveSpan: Equatable, Codable, Sendable {
 public struct DeadMap: Codable, Sendable {
     public let grid: SensorGrid
     public private(set) var health: [CellHealth]
-    /// Column indices condemned as a whole by the stripe rule.
-    public private(set) var deadColumns: Set<Int>
-    /// Row indices condemned as a whole by the stripe rule.
-    public private(set) var deadRows: Set<Int>
+    /// Columns condemned as a whole by the stripe rule: the trace is
+    /// unreliable along its length and should not be relied on for pointer
+    /// travel. Condemned does not mean severed — a thoroughly intermittent
+    /// trace is just as unusable as a dead one.
+    public private(set) var condemnedColumns: Set<Int>
+    /// Rows condemned as a whole by the stripe rule.
+    public private(set) var condemnedRows: Set<Int>
     public let createdAt: Date
 
     public init(grid: SensorGrid,
                 health: [CellHealth]? = nil,
-                deadColumns: Set<Int> = [],
-                deadRows: Set<Int> = [],
+                condemnedColumns: Set<Int> = [],
+                condemnedRows: Set<Int> = [],
                 createdAt: Date = Date()) {
         self.grid = grid
         self.health = health ?? Array(repeating: .unknown, count: grid.cellCount)
-        self.deadColumns = deadColumns
-        self.deadRows = deadRows
+        self.condemnedColumns = condemnedColumns
+        self.condemnedRows = condemnedRows
         self.createdAt = createdAt
     }
 
@@ -131,23 +134,23 @@ public struct DeadMap: Codable, Sendable {
     /// their length. Drives the horizontal pointer gain.
     public var usableColumnSpan: LiveSpan {
         longestSpan(count: grid.cols, isUsable: { col in
-            !deadColumns.contains(col)
+            !condemnedColumns.contains(col)
         })
     }
 
     public var usableRowSpan: LiveSpan {
         longestSpan(count: grid.rows, isUsable: { row in
-            !deadRows.contains(row)
+            !condemnedRows.contains(row)
         })
     }
 
     /// Fraction of the surface width still reachable, in 0<f<=1.
     public var usableWidthFraction: Double {
-        Double(grid.cols - deadColumns.count) / Double(grid.cols)
+        Double(grid.cols - condemnedColumns.count) / Double(grid.cols)
     }
 
     public var usableHeightFraction: Double {
-        Double(grid.rows - deadRows.count) / Double(grid.rows)
+        Double(grid.rows - condemnedRows.count) / Double(grid.rows)
     }
 
     private func longestSpan(count: Int, isUsable: (Int) -> Bool) -> LiveSpan {
@@ -212,35 +215,43 @@ public struct DeadMap: Codable, Sendable {
     public mutating func condemnStripes(thresholds: DeadMapThresholds = .default) {
         var columns = Set<Int>()
         for col in 0..<grid.cols {
-            let states = (0..<grid.rows).map { health(at: Cell(col: col, row: $0)) }
-            if isCondemned(states, length: grid.rows, thresholds: thresholds) {
+            let cells = (0..<grid.rows).map { Cell(col: col, row: $0) }
+            if isCondemned(cells.map { health(at: $0) }, length: grid.rows,
+                           thresholds: thresholds) {
                 columns.insert(col)
             }
         }
 
         var rows = Set<Int>()
         for row in 0..<grid.rows {
-            let states = (0..<grid.cols).map { health(at: Cell(col: $0, row: row)) }
-            if isCondemned(states, length: grid.cols, thresholds: thresholds) {
+            let cells = (0..<grid.cols).map { Cell(col: $0, row: row) }
+            if isCondemned(cells.map { health(at: $0) }, length: grid.cols,
+                           thresholds: thresholds) {
                 rows.insert(row)
             }
         }
 
-        deadColumns = columns
-        deadRows = rows
+        condemnedColumns = columns
+        condemnedRows = rows
 
-        // Propagate the verdict to every cell of a condemned trace, so the
-        // tracker's suspect-cell checks see the whole stripe rather than only
-        // the part that was swept.
+        // Extend each verdict to the cells of that trace the sweep never
+        // reached, using whichever fault the judged cells actually showed. A
+        // trace that flickers along its length is reported as flickering, not
+        // promoted to severed: both are unusable, but only one of them is true.
         for col in columns {
-            for row in 0..<grid.rows where health(at: Cell(col: col, row: row)) == .unknown {
-                health[grid.index(of: Cell(col: col, row: row))] = .dead
-            }
+            fill((0..<grid.rows).map { Cell(col: col, row: $0) })
         }
         for row in rows {
-            for col in 0..<grid.cols where health(at: Cell(col: col, row: row)) == .unknown {
-                health[grid.index(of: Cell(col: col, row: row))] = .dead
-            }
+            fill((0..<grid.cols).map { Cell(col: $0, row: row) })
+        }
+    }
+
+    private mutating func fill(_ cells: [Cell]) {
+        let judged = cells.map { health(at: $0) }.filter { $0.isSuspect }
+        let deadCount = judged.count { $0 == .dead }
+        let verdict: CellHealth = deadCount * 2 >= judged.count ? .dead : .flaky
+        for cell in cells where health(at: cell) == .unknown {
+            health[grid.index(of: cell)] = verdict
         }
     }
 

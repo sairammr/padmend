@@ -31,18 +31,17 @@ public struct CoverageMap: Codable, Sendable {
         hits[grid.index(of: grid.cell(at: point))] += 1
     }
 
-    /// Records that a finger travelled from `from` to `to`. Cells along the way
-    /// that did not produce their own sample are credited as transits.
+    /// Records one frame on which the sensor reported nothing while the finger
+    /// was, by the tracker's reckoning, over `point`.
     ///
-    /// Both endpoints are excluded: they are where samples exist, so crediting
-    /// them as transits would make every live cell look partly flaky.
-    public mutating func recordTransit(from: Point, to: Point) {
-        let startCell = grid.cell(at: from)
-        let endCell = grid.cell(at: to)
-        for cell in grid.cells(along: from, to: to) {
-            if cell == startCell || cell == endCell { continue }
-            transits[grid.index(of: cell)] += 1
-        }
+    /// Attributing a dropout frame by frame rather than by path geometry
+    /// matters: when a contact vanishes between two neighbouring cells there
+    /// is no interior to blame, and splitting the blame across both would make
+    /// healthy cells beside a damaged trace look damaged. The tracker already
+    /// extrapolates a position for each silent frame, which is a direct answer
+    /// to "where was the finger when nothing was reported".
+    public mutating func recordSilentFrame(at point: Point) {
+        transits[grid.index(of: grid.cell(at: point))] += 1
     }
 
     /// Fraction of cells with any evidence at all. Drives the "keep sweeping"

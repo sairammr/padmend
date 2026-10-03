@@ -107,7 +107,8 @@ func deadMap(grid: SensorGrid = .appleBuiltInDefault,
         }
     }
     return DeadMap(grid: grid, health: health,
-                   deadColumns: deadColumns, deadRows: [])
+                   condemnedColumns: deadColumns.union(flakyColumns),
+                   condemnedRows: [])
 }
 
 extension Array where Element == TrackerOutput {

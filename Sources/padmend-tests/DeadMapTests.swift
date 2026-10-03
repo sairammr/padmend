@@ -15,19 +15,17 @@ func runDeadMapTests() {
                           flakyColumns: Set<Int> = [],
                           deadCells: Set<Cell> = [],
                           pass: Int = 0) {
-        var lastReported: Point? = nil
         for col in 0..<grid.cols {
             let cell = Cell(col: col, row: row)
             let point = grid.center(of: cell)
             let silent = deadColumns.contains(col)
                 || deadCells.contains(cell)
                 || (flakyColumns.contains(col) && pass % 3 != 0)
-            if silent { continue }
-            if let previous = lastReported {
-                coverage.recordTransit(from: previous, to: point)
+            if silent {
+                coverage.recordSilentFrame(at: point)
+                continue
             }
             coverage.recordHit(at: point)
-            lastReported = point
         }
     }
 
@@ -78,7 +76,7 @@ func runDeadMapTests() {
         test("the stripe rule condemns the unswept part of a severed column") {
         // Only the bottom third of the pad was swept.
         let map = DeadMap.classify(fullSweep(deadColumns: [11], rows: 0..<6))
-        expect(map.deadColumns.contains(11))
+        expect(map.condemnedColumns.contains(11))
         expectEq(map.health(at: Cell(col: 11, row: 17)), .dead)
         expectEq(map.health(at: Cell(col: 12, row: 17)), .unknown)
     }
@@ -88,36 +86,34 @@ func runDeadMapTests() {
         // Vertical sweeps, so a dead row shows up as a gap along the path.
         for pass in 0..<5 {
             for col in 0..<grid.cols {
-                var lastReported: Point? = nil
                 for row in 0..<grid.rows {
-                    if row == 5 { continue }
                     let point = grid.center(of: Cell(col: col, row: row))
-                    if let previous = lastReported {
-                        coverage.recordTransit(from: previous, to: point)
+                    if row == 5 {
+                        coverage.recordSilentFrame(at: point)
+                        continue
                     }
                     coverage.recordHit(at: point)
-                    lastReported = point
                 }
             }
             _ = pass
         }
         let map = DeadMap.classify(coverage)
-        expect(map.deadRows.contains(5))
-        expect(map.deadColumns.isEmpty)
+        expect(map.condemnedRows.contains(5))
+        expect(map.condemnedColumns.isEmpty)
     }
 
         test("one dead cell is not a severed trace") {
         let map = DeadMap.classify(
             fullSweep(deadCells: [Cell(col: 11, row: 9)], passes: 6))
         expectEq(map.health(at: Cell(col: 11, row: 9)), .dead)
-        expect(!map.deadColumns.contains(11))
+        expect(!map.condemnedColumns.contains(11))
         expectEq(map.health(at: Cell(col: 11, row: 2)), .live)
     }
 
         test("a clean pad is condemned nowhere") {
         let map = DeadMap.classify(fullSweep())
-        expect(map.deadColumns.isEmpty)
-        expect(map.deadRows.isEmpty)
+        expect(map.condemnedColumns.isEmpty)
+        expect(map.condemnedRows.isEmpty)
         expect(!map.health.contains(.dead))
         expect(!map.health.contains(.flaky))
     }
@@ -125,7 +121,7 @@ func runDeadMapTests() {
         test("usable spans and fractions reflect the condemned traces") {
         let map = DeadMap(grid: grid,
                           health: Array(repeating: .live, count: grid.cellCount),
-                          deadColumns: [0, 1, 2])
+                          condemnedColumns: [0, 1, 2])
         expectEq(map.usableColumnSpan, LiveSpan(start: 3, end: 25))
         expectClose(map.usableWidthFraction, 23.0 / 26.0)
         expectClose(map.usableHeightFraction, 1)
@@ -133,7 +129,7 @@ func runDeadMapTests() {
     }
 
         test("the longest usable span wins when a stripe splits the pad") {
-        let map = DeadMap(grid: grid, deadColumns: [8])
+        let map = DeadMap(grid: grid, condemnedColumns: [8])
         expectEq(map.usableColumnSpan, LiveSpan(start: 9, end: 25))
     }
 
@@ -156,7 +152,7 @@ func runDeadMapTests() {
         let original = DeadMap.classify(fullSweep(deadColumns: [11]))
         let restored = try JSONDecoder().decode(
             DeadMap.self, from: JSONEncoder().encode(original))
-        expectEq(restored.deadColumns, original.deadColumns)
+        expectEq(restored.condemnedColumns, original.condemnedColumns)
         expectEq(restored.health, original.health)
         expectEq(restored.grid, original.grid)
     }
@@ -170,18 +166,15 @@ func runDeadMapTests() {
         expectEq(coverage.evidenceCoverage, 0)
     }
 
-        test("transits are not credited to the cells that produced samples") {
+        test("a silent frame is credited to exactly the cell it happened in") {
         var coverage = CoverageMap(grid: grid)
-        let from = grid.center(of: Cell(col: 4, row: 4))
-        let to = grid.center(of: Cell(col: 7, row: 4))
-        coverage.recordHit(at: from)
-        coverage.recordTransit(from: from, to: to)
-        coverage.recordHit(at: to)
-
-        expectEq(coverage.transits(at: Cell(col: 4, row: 4)), 0)
-        expectEq(coverage.transits(at: Cell(col: 7, row: 4)), 0)
-        expectEq(coverage.transits(at: Cell(col: 5, row: 4)), 1)
-        expectEq(coverage.transits(at: Cell(col: 6, row: 4)), 1)
+        let spot = grid.center(of: Cell(col: 7, row: 7))
+        coverage.recordSilentFrame(at: spot)
+        coverage.recordSilentFrame(at: spot)
+        expectEq(coverage.transits(at: Cell(col: 7, row: 7)), 2)
+        expectEq(coverage.transits(at: Cell(col: 6, row: 7)), 0,
+                 "a neighbouring healthy cell must not inherit the blame")
+        expectEq(coverage.transits(at: Cell(col: 8, row: 7)), 0)
     }
 }
 }
