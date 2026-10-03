@@ -76,6 +76,20 @@ public struct Finger: Equatable, Sendable {
     public var isCoasting: Bool
     public var age: Double
     public var pathLength: Double
+
+    public init(id: Int,
+                position: Point,
+                delta: Point,
+                isCoasting: Bool,
+                age: Double,
+                pathLength: Double) {
+        self.id = id
+        self.position = position
+        self.delta = delta
+        self.isCoasting = isCoasting
+        self.age = age
+        self.pathLength = pathLength
+    }
 }
 
 public enum TrackerEvent: Equatable, Sendable {

@@ -5,5 +5,6 @@ runDeadMapTests()
 runContactTrackerTests()
 runPointerMapperTests()
 runCalibrationTests()
+runGestureRecognizerTests()
 
 exit(report())
